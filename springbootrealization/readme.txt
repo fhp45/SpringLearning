@@ -1,0 +1,13 @@
+如果要让一个普通类交给Spring容器管理，通常有以下方法：
+1、使用 @Configuration与@Bean 注解
+2、使用@Controller @Service @Repository @Component 注解标注该类，然后启用@ComponentScan自动扫描
+3、使用@Import 方法
+
+Spring Boot中加载组件jar包中的实例就是使用的@Import方式
+@Import(AutoConfigurationImportSelector)
+AutoConfigurationImportSelector是ImportSelector的实现类，重写了selectImports方法，selectImports方法会返回所有需要加载的类的全限定名
+Spring Boot这里的实现是通过类加载器获取所有jar下META-INFO/spring.factories里面类的全限定名
+这些类实际上都是使用@Configuration标注的类，然后里面包含了组件需要的bean，然后Spring就会把这些bean加载到容器
+
+
+这里的代码演示了使用@Import来注入bean

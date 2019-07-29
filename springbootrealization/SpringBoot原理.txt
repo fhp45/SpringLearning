@@ -1,0 +1,118 @@
+SpringBoot原理--分析Spring Boot启动机制
+参考自博客https://www.cnblogs.com/hjwublog/p/10332042.html
+
+springboot帮我们做了什么
+通常搭建一个基于spring的web应用，我们需要做以下工作：
+
+1、pom文件中引入相关jar包，包括spring、springmvc、redis、mybaits、log4j、mysql-connector-java 等等相关jar ...
+
+2、配置web.xml，Listener配置、Filter配置、Servlet配置、log4j配置、error配置 ...
+
+3、配置数据库连接、配置spring事务
+
+4、配置视图解析器
+
+5、开启注解、自动扫描功能
+
+6、配置完成后部署tomcat、启动调试
+
+......
+
+搭个初始项目不一会就一个小时甚至半天过去了。而用springboot后，一切都变得很简便快速。下来我们来一步步分析springboot的起步依赖与自动配置这两个核心原理。
+
+spring-boot-starter-xxx是官方提供的starter，xxx-spring-boot-starter是第三方提供的starter。
+spring Boot依赖于大量的注解
+
+起步依赖：以mybatis-spring-boot-starter为例
+        点进去后发现，里面只有一个pom.xml，用来引入相关的jar包
+            注意到里面引入了 mybatis-spring-boot-autoconfigure这个的jar【所有的spring-boot-starter实际的实现都是通过autoconfigure来完成的】
+
+自动配置：starter为我们引入了相应的jar包之后，这些bean又是怎么被注入到spring中的呢？【基于注解】
+         以org.mybatis.spring.boot.autoconfigure.MybatisAutoConfiguration为例
+
+         @Configuration
+         @ConditionalOnClass({SqlSessionFactory.class, SqlSessionFactoryBean.class})
+         @ConditionalOnSingleCandidate(DataSource.class)
+         @EnableConfigurationProperties({MybatisProperties.class})
+         @AutoConfigureAfter({DataSourceAutoConfiguration.class, MybatisLanguageDriverAutoConfiguration.class})
+         public class MybatisAutoConfiguration implements InitializingBean {
+
+                @Bean
+                @ConditionalOnMissingBean
+                public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {...}
+
+                @Bean
+                @ConditionalOnMissingBean
+                public SqlSessionTemplate sqlSessionTemplate(SqlSessionFactory sqlSessionFactory) {...}
+
+         }
+        我们来解释一些这个自动配置类上的注解
+        @Configuration注解的类可以看作是能生产让Spring IoC容器管理的Bean实例的工厂。【作用相当于以前的applicationContext.xml】
+        @Bean注解告诉Spring，一个带有@Bean的注解方法将返回一个对象，该对象应该被注册到spring容器中。
+    自动配置条件依赖: 完成自动配置是有依赖条件的
+        这些是springboot特有的，常见的条件依赖注解有：
+        @ConditionalOnBean，仅在当前上下文中存在某个bean时，才会实例化这个Bean。
+
+        @ConditionalOnClass，某个class位于类路径上，才会实例化这个Bean。
+
+        @ConditionalOnExpression，当表达式为true的时候，才会实例化这个Bean。
+
+        @ConditionalOnMissingBean，仅在当前上下文中不存在某个bean时，才会实例化这个Bean。
+
+        @ConditionalOnMissingClass，某个class在类路径上不存在的时候，才会实例化这个Bean。
+
+        @ConditionalOnNotWebApplication，不是web应用时才会实例化这个Bean。
+
+        @AutoConfigureAfter，在某个bean完成自动配置后实例化这个bean。
+
+        @AutoConfigureBefore，在某个bean完成自动配置前实例化这个bean。
+
+        所以要完成Mybatis的自动配置，需要在类路径中存在SqlSessionFactory.class、SqlSessionFactoryBean.class这两个类，需要存在DataSource这个bean且这个bean完成自动注册。
+由于@AutoConfigureAfter({DataSourceAutoConfiguration.class, MybatisLanguageDriverAutoConfiguration.class})
+    我们查看DataSourceAutoConfiguration这个类, 这个类属于spring-boot-autoconfigure-2.1.6.RELEASE.jar【自动配置包】
+    自动配置这个包帮们引入了jdbc、kafka、logging、mail、mongo等包。很多包需要我们引入相应jar后自动配置才生效。
+
+到此我们已经知道了bean的配置过程，但是还没有看到springboot是如何读取yml或者properites配置文件的的属性来创建数据源的？
+    在DataSourceAutoConfiguration类里面，我们注意到使用了EnableConfigurationProperties这个注解。
+    DataSourceProperties中封装了数据源的各个属性，且使用了注解ConfigurationProperties指定了配置文件的前缀。
+
+  两个重要的注解：
+  @ConfigurationProperties注解的作用是把yml或者properties配置文件转化为bean。【注解中的参数用来指定yml文件中的对应的配置信息】
+  @EnableConfigurationProperties注解的作用是使@ConfigurationProperties注解生效。
+  如果只配置@ConfigurationProperties注解，在spring容器中是获取不到yml或者properties配置文件转化的bean的。
+
+
+bean发现
+springboot默认扫描启动类所在的包下的主类与子类的所有组件，但并没有包括依赖包的中的类，那么依赖包中的bean是如何被发现和加载的？
+    这时候我们就需要找到启动类查看了
+    我们通常在启动类中加@SpringBootApplication这个注解
+
+    @SpringBootApplication
+    public class SpringbootrealizationApplication {...}
+
+    @Target({ElementType.TYPE})
+    @Retention(RetentionPolicy.RUNTIME)
+    @Documented
+    @Inherited
+    @SpringBootConfiguration
+    @EnableAutoConfiguration
+    @ComponentScan(
+        excludeFilters = {@Filter(
+        type = FilterType.CUSTOM,
+        classes = {TypeExcludeFilter.class}
+    ), @Filter(
+        type = FilterType.CUSTOM,
+        classes = {AutoConfigurationExcludeFilter.class}
+    )}
+    )
+    public @interface SpringBootApplication {...}
+这里重要的三个注解是
+@SpringBootConfiguration的作用上面我们已经知道了，被注解的类将成为一个bean配置类。【SpringBootConfiguration和@Configuration注解作用一致】
+@ComponentScan的作用就是自动扫描并加载符合条件的组件，比如@Component和@Repository等，最终将这些bean定义加载到spring容器中。
+@EnableAutoConfiguration 这个注解的功能很重要，借助@Import的支持，收集和注册依赖包中相关的bean定义。
+
+最重要的是EnableAutoConfiguration
+实现方式是@SpringBootApplication->@EnableAutoConfiguration -> @Import(AutoConfigurationImportSelector)->AutoConfigurationImportSelector->selectImports->getCandidateConfigurations->classLoader.getResources(FACTORIES_RESOURCE_LOCATION)
+作用      SpringBoot项目启动类  -> 允许自动配置  -> @Import注解，导入ImportSelector的实现类返回的类的权限定名的实例-> 重写ImportSelector的selectImports方法->*-> Spring Boot实现的获取待导入的@Configuration类-> 读取类加载器获取全部的META-INF/spring.factories
+
+
